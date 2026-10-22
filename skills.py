@@ -72,7 +72,7 @@ class RecallSkill(Skill):
         lines = ["Here are the most relevant memories:"]
         for r in results:
             lines.append(f"- [{r['provenance']}] {r['content']} (score: {r.get('score', 0):.2f})")
-        return SkillResult(True, "\n".lines)
+        return SkillResult(True, "\n".join(lines))
 
 
 class NoteSkill(Skill):

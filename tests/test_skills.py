@@ -84,3 +84,38 @@ def test_skill_result_no_confirmation():
     result = SkillResult(True, "Done")
     assert result.requires_confirmation is False
     assert result.confirmation_prompt is None
+
+
+
+def test_recall_skill_execute_builds_text(mock_router):
+    """RecallSkill.execute() joins memory lines with newlines (was crashing with .lines bug)."""
+    from unittest.mock import patch
+
+    fake_memories = [
+        {"id": 1, "content": "User likes coffee", "provenance": "user_said", "score": 0.92},
+        {"id": 2, "content": "Meeting at 3pm", "provenance": "tool_output", "score": 0.78},
+    ]
+
+    skill = RecallSkill()
+    with patch("skills.hybrid_recall", return_value=fake_memories):
+        result = skill.execute("recall my preferences", {}, mock_router)
+
+    assert result.success is True
+    assert "Here are the most relevant memories:" in result.output
+    assert "- [user_said] User likes coffee (score: 0.92)" in result.output
+    assert "- [tool_output] Meeting at 3pm (score: 0.78)" in result.output
+    # Verify lines are joined by newlines, not some other separator
+    lines = result.output.split("\n")
+    assert len(lines) == 3  # header + 2 memories
+
+
+def test_recall_skill_execute_no_memories(mock_router):
+    """RecallSkill.execute() returns a message when no memories found."""
+    from unittest.mock import patch
+
+    skill = RecallSkill()
+    with patch("skills.hybrid_recall", return_value=[]):
+        result = skill.execute("recall something unknown", {}, mock_router)
+
+    assert result.success is True
+    assert result.output == "No relevant memories found."
