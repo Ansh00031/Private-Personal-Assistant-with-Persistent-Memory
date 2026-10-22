@@ -15,6 +15,7 @@ class SkillResult:
     output: str
     requires_confirmation: bool = False
     confirmation_prompt: Optional[str] = None
+    action_id: Optional[str] = None
 
 
 class Skill(ABC):

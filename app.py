@@ -12,6 +12,7 @@ from memory.extract import extract_facts_and_episodes
 from memory.recall import hybrid_recall
 from skills import create_default_engine, SkillResult
 from jobs import start_scheduler, shutdown_scheduler, morning_brief
+from tools.actions import registry
 import os
 import logging
 
@@ -45,6 +46,7 @@ class ChatResponse(BaseModel):
     skill_used: Optional[str] = None
     requires_confirmation: bool = False
     confirmation_prompt: Optional[str] = None
+    action_id: Optional[str] = None
 
 
 class MemoryDeleteRequest(BaseModel):
@@ -152,6 +154,7 @@ If user asks to perform an action (write, delete, schedule), indicate what tool 
                     skill_used=skill.name,
                     requires_confirmation=True,
                     confirmation_prompt=skill_result.confirmation_prompt,
+                    action_id=skill_result.action_id,
                 )
             # If skill handled it completely, return its output
             if skill_result.success:
@@ -208,6 +211,44 @@ async def _store_exchange(user_msg: str, assistant_msg: str, provenance: str) ->
         assistant_id = cur.lastrowid
         conn.commit()
     return [user_id, assistant_id]
+
+
+@app.post("/actions/{action_id}/confirm")
+async def confirm_action_endpoint(action_id: str):
+    """Confirm and execute a proposed 2-step tool action."""
+    try:
+        result = registry.confirm(action_id)
+        # Store confirmed action in memories for assistant context
+        summary = result.get("summary", "action")
+        await _store_exchange(f"Confirmed action: {summary}", f"Action executed successfully: {summary}", "tool_output")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Action confirmation execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Action execution failed: {str(e)}")
+
+
+@app.post("/actions/{action_id}/cancel")
+async def cancel_action_endpoint(action_id: str):
+    """Cancel a proposed tool action."""
+    try:
+        result = registry.cancel(action_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/tool-audit-log")
+async def get_tool_audit_log(limit: int = 50):
+    """Retrieve non-sensitive tool audit log entries."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, tool_name, action, target_id, status, timestamp
+            FROM tool_audit_log
+            ORDER BY id DESC LIMIT ?
+        """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 @app.delete("/memory/{memory_id}")

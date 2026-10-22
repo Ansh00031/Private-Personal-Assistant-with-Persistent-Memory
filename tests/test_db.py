@@ -64,6 +64,9 @@ def test_init_db_creates_tables(test_db):
         assert "memories_fts" in table_names
         assert "episodes" in table_names
         assert "provenance_log" in table_names
+        assert "notes" in table_names
+        assert "events" in table_names
+        assert "tool_audit_log" in table_names
         # vec table only exists if vec0 extension is available
         # assert "memories_vec" in table_names  # skipped when vec0 not available
 

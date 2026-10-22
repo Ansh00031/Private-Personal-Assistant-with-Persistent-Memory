@@ -369,12 +369,33 @@ async function handleConfirmation(confirmed) {
     if (confirmationEl) confirmationEl.classList.add("hidden");
     if (!pendingConfirmation) return;
 
+    const actionData = pendingConfirmation;
+    pendingConfirmation = null;
+
     if (confirmed) {
-        addMessage("system", "Action confirmed.");
+        if (actionData.action_id) {
+            try {
+                const resp = await fetch(`${API}/actions/${actionData.action_id}/confirm`, { method: "POST" });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+                const res = await resp.json();
+                addMessage("assistant", `✓ **Action confirmed and executed:** ${res.summary}`);
+            } catch (err) {
+                addMessage("system", `Failed to execute action: ${err.message}`);
+            }
+        } else {
+            addMessage("system", "Action confirmed.");
+        }
     } else {
+        if (actionData.action_id) {
+            try {
+                await fetch(`${API}/actions/${actionData.action_id}/cancel`, { method: "POST" });
+            } catch (_) {}
+        }
         addMessage("system", "Action cancelled.");
     }
-    pendingConfirmation = null;
 }
 
 // Send message
