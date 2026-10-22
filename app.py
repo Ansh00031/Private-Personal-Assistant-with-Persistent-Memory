@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, Literal
 from llm import ModelRouter
-from memory.db import init_db, get_connection, hard_delete_memory, verify_hard_delete
+from memory.db import init_db, get_connection, hard_delete_memory, verify_hard_delete, HAS_SQLCIPHER
 from memory.extract import extract_facts_and_episodes
 from memory.recall import hybrid_recall
 from skills import create_default_engine, SkillResult
@@ -53,6 +53,10 @@ class MemoryDeleteRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
+    if HAS_SQLCIPHER:
+        logger.info("encryption: on")
+    else:
+        logger.warning("encryption: off")
     start_scheduler(router)
 
 

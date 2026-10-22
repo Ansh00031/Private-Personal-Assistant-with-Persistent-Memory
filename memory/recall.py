@@ -2,7 +2,7 @@
 """Memory retrieval: semantic + keyword + temporal."""
 
 from llm import ModelRouter
-from memory.db import get_connection
+from memory.db import get_connection, DB_OperationalError
 from typing import Optional
 import numpy as np
 import sqlite3
@@ -30,7 +30,7 @@ def semantic_search(
                 ORDER BY distance ASC
                 LIMIT ?
             """, (emb_bytes, limit)).fetchall()
-        except sqlite3.OperationalError:
+        except (DB_OperationalError, sqlite3.OperationalError):
             return []  # vec0 extension not available
 
     results = []
