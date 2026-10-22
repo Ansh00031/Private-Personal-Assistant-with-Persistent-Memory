@@ -50,8 +50,8 @@ def main():
     print("\n--- 1. Validating Model IDs against Nebius API ---")
     try:
         available = router.validate_models()
-        print(f"✓ Found {len(available)} models on Nebius Token Factory.")
-        print("✓ All 3 configured model IDs exist on the API.")
+        print(f"[OK] Found {len(available)} models on Nebius Token Factory.")
+        print("[OK] All 3 configured model IDs exist on the API.")
     except Exception as e:
         print(f"FAILED model validation: {e}")
         sys.exit(1)
@@ -97,7 +97,7 @@ def main():
         if dim != 1024:
             print(f"ERROR: Expected 1024 dimensions, got {dim}")
             sys.exit(1)
-        print("✓ Embedding dimension check passed (1024).")
+        print("[OK] Embedding dimension check passed (1024).")
     except Exception as e:
         print(f"FAILED embedding call: {e}")
         sys.exit(1)
@@ -106,7 +106,7 @@ def main():
     print("\n=======================================================")
     print(f"Total verification cost: ${router.daily_cost:.6f}")
     print(f"Daily cost cap remaining: ${max(0.0, router.daily_cost_cap - router.daily_cost):.4f}")
-    print("ALL NEBIUS RUNTIME CHECKS PASSED SUCCESSFULLY! ✓")
+    print("ALL NEBIUS RUNTIME CHECKS PASSED SUCCESSFULLY! [OK]")
     print("=======================================================")
 
 
