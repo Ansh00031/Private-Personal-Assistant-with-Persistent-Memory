@@ -1,0 +1,119 @@
+<!-- path: ui/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Personal Assistant</title>
+    <link rel="stylesheet" href="/ui/style.css?v=9">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <h1>Private Personal Assistant</h1>
+                <button type="button" id="morning-brief-btn" class="chip-btn" title="Generate today's morning briefing">
+                    ☀️ Morning Brief
+                </button>
+            </div>
+            <div class="badges">
+                <span id="model-badge" class="chip badge-nano">nano</span>
+                <span id="cost-counter" class="chip">$0.00</span>
+            </div>
+        </header>
+
+        <main>
+            <div id="chat" class="chat"></div>
+
+            <div class="composer-area">
+                <div class="composer">
+                    <form id="chat-form" class="input-row">
+                        <div class="input-wrapper">
+                            <button type="button" id="voice-btn" class="icon-btn" title="Voice input (click to speak)" aria-label="Voice input">
+                                <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-6 0z"></path>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                    <line x1="12" y1="19" x2="12" y2="22"></line>
+                                </svg>
+                                <svg class="mic-listening" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+                                    <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                                </svg>
+                            </button>
+                            <input type="text" id="input" placeholder="Type a message..." autocomplete="off" required>
+                        </div>
+                        <select id="model-select">
+                            <option value="nano">nano (fast)</option>
+                            <option value="ultra">ultra (smart)</option>
+                        </select>
+                        <button type="submit" class="primary">Send</button>
+                    </form>
+
+                    <div id="voice-controls" class="voice-controls">
+                        <!-- Dynamic Reactive Audio Waveform / Visualizer -->
+                        <div id="voice-visualizer-container" class="voice-visualizer-container hidden">
+                            <canvas id="voice-canvas" width="600" height="50"></canvas>
+                            <span id="visualizer-label" class="visualizer-label">Listening...</span>
+                        </div>
+
+                        <div class="voice-controls-row">
+                            <label class="toggle" title="Read assistant replies aloud">
+                                <input type="checkbox" id="auto-speak">
+                                <span class="slider"></span>
+                                <span>Voice reply</span>
+                            </label>
+                            <select id="voice-select" title="Choose speech output voice">
+                                <option value="">Default voice</option>
+                            </select>
+                            <select id="recognition-lang" title="Speech input / language dialect (English, Hinglish, Hindi)">
+                                <option value="en-US">English (US)</option>
+                                <option value="en-IN">English / Hinglish (India)</option>
+                                <option value="hi-IN">Hindi (हिंदी)</option>
+                            </select>
+                            <div class="voice-slider-group" title="Speech speed (rate, updates real-time)">
+                                <label for="voice-rate">Speed: <span id="rate-val">1.0x</span></label>
+                                <input type="range" id="voice-rate" min="0.5" max="2.0" step="0.1" value="1.0">
+                            </div>
+                            <div class="voice-slider-group" title="Speech pitch (updates real-time)">
+                                <label for="voice-pitch">Pitch: <span id="pitch-val">1.0</span></label>
+                                <input type="range" id="voice-pitch" min="0.5" max="1.5" step="0.1" value="1.0">
+                            </div>
+                            <button type="button" id="speak-last" class="icon-btn" title="Speak last response" aria-label="Speak last response">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="voice-meta-row">
+                            <span id="voice-status" class="voice-status hidden"></span>
+                            <span class="voice-privacy-hint" title="Browser speech-to-text operates via browser APIs and may transmit voice audio to browser vendor servers (e.g. Google, Microsoft, Apple) for processing. Voice audio is never stored in your local encrypted memory database.">Privacy: Browser speech may send audio to browser vendor; local memory remains encrypted ⓘ</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="confirmation" class="confirmation hidden">
+                <p id="confirm-text"></p>
+                <div class="confirm-buttons">
+                    <button id="confirm-yes">Confirm</button>
+                    <button id="confirm-no">Cancel</button>
+                </div>
+            </div>
+        </main>
+
+        <aside id="memories-panel" class="panel hidden">
+            <h2>Memories</h2>
+            <div id="memories-list"></div>
+        </aside>
+    </div>
+
+    <!-- Markdown library for tabular timetables & formatted responses -->
+    <script src="/ui/marked.min.js"></script>
+    <!-- HTML to PDF export library for 1-click PDF downloads -->
+    <script src="/ui/html2pdf.bundle.min.js"></script>
+    <!-- Main chat & memory logic -->
+    <script src="/ui/panel.js?v=9"></script>
+    <!-- Voice STT & TTS loaded separately for error isolation -->
+    <script src="/ui/voice.js?v=9"></script>
+</body>
+</html>

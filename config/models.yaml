@@ -1,0 +1,14 @@
+# Model configuration for Nebius API
+# Get exact IDs from client.models.list(); IDs are case-sensitive.
+
+models:
+  nano: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
+  ultra: "nvidia/Nemotron-3-Ultra-550b-a55b"
+
+embedding:
+  model: "Qwen/Qwen3-Embedding-8B"
+  dimensions: 1024
+
+api:
+  base_url: "https://api.tokenfactory.nebius.com/v1/"
+  # NEBIUS_API_KEY from environment
