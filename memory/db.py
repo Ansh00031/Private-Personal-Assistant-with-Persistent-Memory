@@ -37,6 +37,7 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def get_salt_for_path(db_path: Path) -> bytes:
     """Retrieve or create persistent salt for key derivation."""
+    db_path = Path(db_path)
     salt_env = os.getenv("MEMORY_SALT")
     if salt_env:
         return salt_env.encode("utf-8")

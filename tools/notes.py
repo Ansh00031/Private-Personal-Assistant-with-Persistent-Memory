@@ -17,7 +17,7 @@ def handle_note(user_input: str, context: dict, router) -> SkillResult:
         return delete_note(user_input, context, router)
     elif any(w in lower for w in ["update", "edit", "modify", "change note"]):
         return update_note(user_input, context, router)
-    elif any(w in lower for w in ["create", "write", "save", "add note", "new note", "take note", "remember this note"]):
+    elif any(w in lower for w in ["create", "write", "save", "add", "new note", "take note", "remember this note", "note:"]):
         return create_note(user_input, context, router)
     elif any(w in lower for w in ["read", "show", "list", "get notes", "my notes", "view notes"]):
         return read_notes(user_input, context)
