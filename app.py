@@ -14,7 +14,9 @@ from skills import create_default_engine, SkillResult
 from jobs import start_scheduler, shutdown_scheduler, morning_brief
 from tools.actions import registry
 import os
+import time
 import logging
+from memory.db import HAS_SQLCIPHER
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +27,23 @@ app = FastAPI(title="Private Personal Assistant", version="0.1.0")
 router = ModelRouter()
 skill_engine = create_default_engine(router)
 init_db()
+
+# Rate limiting for demo protection (configurable requests per minute per client)
+RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "30"))
+_request_counts = {}
+
+def check_rate_limit(client_ip: str):
+    now = time.time()
+    minute_window = int(now // 60)
+    key = f"{client_ip}:{minute_window}"
+    count = _request_counts.get(key, 0)
+    if count >= RATE_LIMIT_RPM:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({RATE_LIMIT_RPM} requests/min). Please wait a moment.")
+    _request_counts[key] = count + 1
+    if len(_request_counts) > 500:
+        for k in list(_request_counts.keys()):
+            if not k.endswith(f":{minute_window}"):
+                _request_counts.pop(k, None)
 
 # Mount static files for UI
 app.mount("/ui", StaticFiles(directory="ui"), name="ui")
@@ -74,7 +93,27 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Production health check verifying DB connectivity, encryption status, and models."""
+    db_ok = False
+    try:
+        with get_connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+            db_ok = True
+    except Exception as e:
+        logger.error(f"Health check DB probe failed: {e}")
+
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "connected" if db_ok else "error",
+        "encryption": "on" if HAS_SQLCIPHER else "off",
+        "models": {
+            "nano": router.nano_model,
+            "ultra": router.ultra_model,
+            "embedding": router.embedding_model,
+        },
+        "daily_cost_usd": router.daily_cost,
+        "daily_cost_cap_usd": router.daily_cost_cap,
+    }
 
 
 @app.post("/morning-brief")
@@ -89,7 +128,9 @@ async def trigger_morning_brief():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_req: Request):
+    client_ip = http_req.client.host if http_req.client else "local"
+    check_rate_limit(client_ip)
     """Main chat endpoint with memory retrieval, conversation history, and skill routing."""
     try:
         user_msg = request.message
