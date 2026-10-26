@@ -119,3 +119,41 @@ def test_recall_skill_execute_no_memories(mock_router):
 
     assert result.success is True
     assert result.output == "No relevant memories found."
+
+def test_web_search_skill_can_handle(mock_router):
+    """WebSearchSkill triggers on search queries."""
+    from skills import WebSearchSkill
+    skill = WebSearchSkill()
+    assert skill.can_handle("search web for latest news on ai", {})
+    assert skill.can_handle("google quantum computing", {})
+    assert skill.can_handle("web search python 3.12 release", {})
+    assert not skill.can_handle("hello friend", {})
+
+
+def test_web_search_skill_execute_with_mocked_tavily(mock_router):
+    """WebSearchSkill calls search_web_tavily and formats results."""
+    from unittest.mock import patch
+    from skills import WebSearchSkill
+
+    skill = WebSearchSkill()
+    fake_tavily_resp = {
+        "success": True,
+        "answer": "Nemotron 3 was released by NVIDIA in 2026.",
+        "results": [
+            {
+                "title": "NVIDIA News",
+                "url": "https://nvidia.com/news",
+                "content": "NVIDIA announced the Nemotron 3 family."
+            }
+        ],
+        "query": "Nemotron 3"
+    }
+
+    mock_router.chat.return_value = ("According to [NVIDIA News](https://nvidia.com/news), Nemotron 3 was announced.", "nano")
+
+    with patch("tools.web_search.search_web_tavily", return_value=fake_tavily_resp):
+        result = skill.execute("search web for Nemotron 3", {}, mock_router)
+
+    assert result.success is True
+    assert "https://nvidia.com/news" in result.output
+

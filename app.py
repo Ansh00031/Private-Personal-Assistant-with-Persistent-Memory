@@ -13,7 +13,10 @@ from memory.recall import hybrid_recall
 from skills import create_default_engine, SkillResult
 from jobs import start_scheduler, shutdown_scheduler, morning_brief
 from tools.actions import registry
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 import time
 import logging
 from memory.db import HAS_SQLCIPHER

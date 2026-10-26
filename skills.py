@@ -62,7 +62,10 @@ class RecallSkill(Skill):
     triggers = ["remember", "recall", "what did i", "find", "search"]
 
     def can_handle(self, user_input: str, context: dict) -> bool:
-        return any(t in user_input.lower() for t in self.triggers)
+        lower = user_input.lower()
+        if any(w in lower for w in ["search web", "web search", "online", "google", "look up on web"]):
+            return False
+        return any(t in lower for t in self.triggers)
 
     def execute(self, user_input: str, context: dict, router: ModelRouter) -> SkillResult:
         # Extract query from input
@@ -116,9 +119,46 @@ class FileSkill(Skill):
         return handle_files(user_input, context, router)
 
 
+class WebSearchSkill(Skill):
+    name = "web_search"
+    description = "Search the live web using Tavily Search API"
+    triggers = ["search web", "web search", "google", "look up on web", "search online", "find online", "latest news on"]
+
+    def can_handle(self, user_input: str, context: dict) -> bool:
+        return any(t in user_input.lower() for t in self.triggers)
+
+    def execute(self, user_input: str, context: dict, router: ModelRouter) -> SkillResult:
+        from tools.web_search import search_web_tavily
+        import re
+        # Clean search query
+        query = re.sub(r'^(please\s+)?(search(\s+the)?\s+web\s+(for|about)?|google|look\s+up\s+on\s+web|search\s+online\s+(for)?)\s*', '', user_input, flags=re.I).strip()
+        if not query:
+            query = user_input
+
+        search_res = search_web_tavily(query, max_results=3)
+        if not search_res.get("success"):
+            return SkillResult(False, f"Web search failed: {search_res.get('error', 'Unknown error')}")
+
+        results = search_res.get("results", [])
+        if not results:
+            return SkillResult(True, f"No web search results found for '{query}'.")
+
+        context_text = "\n\n".join([f"Source [{r['title']}]({r['url']}):\n{r['content']}" for r in results])
+        if search_res.get("answer"):
+            context_text = f"Direct Answer: {search_res['answer']}\n\n" + context_text
+
+        prompt = f"Answer the user's query based on the following Tavily web search results. Include source URLs as markdown links.\n\nQuery: {user_input}\n\nWeb Search Results:\n{context_text}"
+        summary, _ = router.chat(
+            messages=[{"role": "user", "content": prompt}],
+            model="nano"
+        )
+        return SkillResult(True, summary)
+
+
 # Default skill registry
 def create_default_engine(router: ModelRouter) -> SkillEngine:
     engine = SkillEngine(router)
+    engine.register(WebSearchSkill())
     engine.register(RecallSkill())
     engine.register(NoteSkill())
     engine.register(CalendarSkill())
