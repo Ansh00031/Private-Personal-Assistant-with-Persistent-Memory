@@ -122,17 +122,29 @@ class FileSkill(Skill):
 class WebSearchSkill(Skill):
     name = "web_search"
     description = "Search the live web using Tavily Search API"
-    triggers = ["search web", "web search", "google", "look up on web", "search online", "find online", "latest news on"]
+    triggers = [
+        "search", "google", "web", "online", "look up",
+        "current price", "current rate", "exchange rate", "dollar price", "doller price", "usd to inr", "inr to usd",
+        "latest news", "today", "weather", "live price", "stock price"
+    ]
 
     def can_handle(self, user_input: str, context: dict) -> bool:
-        return any(t in user_input.lower() for t in self.triggers)
+        lower = user_input.lower()
+        if any(w in lower for w in ["my memory", "in my memory", "did i say", "my notes", "recall my"]):
+            return False
+        return any(t in lower for t in self.triggers)
 
     def execute(self, user_input: str, context: dict, router: ModelRouter) -> SkillResult:
         from tools.web_search import search_web_tavily
         import re
         # Clean search query
-        query = re.sub(r'^(please\s+)?(search(\s+the)?\s+web\s+(for|about)?|google|look\s+up\s+on\s+web|search\s+online\s+(for)?)\s*', '', user_input, flags=re.I).strip()
-        if not query:
+        query = re.sub(
+            r'^(please\s+)?(search(\s+the)?(\s+web|\s+online)?(\s+for|\s+about)?|google|look\s+up(\s+on\s+web|\s+online)?|find\s+(out\s+)?(about)?|what\s+is\s+(the\s+)?(current\s+)?)\s*',
+            '',
+            user_input,
+            flags=re.I
+        ).strip()
+        if not query or len(query) < 3:
             query = user_input
 
         search_res = search_web_tavily(query, max_results=3)
@@ -147,7 +159,7 @@ class WebSearchSkill(Skill):
         if search_res.get("answer"):
             context_text = f"Direct Answer: {search_res['answer']}\n\n" + context_text
 
-        prompt = f"Answer the user's query based on the following Tavily web search results. Include source URLs as markdown links.\n\nQuery: {user_input}\n\nWeb Search Results:\n{context_text}"
+        prompt = f"Answer the user's query clearly and concisely based on the following Tavily web search results. Include source URLs as markdown links.\n\nQuery: {user_input}\n\nWeb Search Results:\n{context_text}"
         summary, _ = router.chat(
             messages=[{"role": "user", "content": prompt}],
             model="nano"

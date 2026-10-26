@@ -214,6 +214,29 @@ If user asks to perform an action (write, delete, schedule), indicate what tool 
         # 5. Fall back to LLM with full context
         response, model_used = router.chat(messages, model=request.model)
 
+        # Intercept tool actions emitted by LLM (e.g. [tool]search web for ...[/tool])
+        import re
+        tool_call_match = re.search(r'\[tool\](.*?)\[/tool\]', response, re.IGNORECASE | re.DOTALL)
+        if not tool_call_match:
+            tool_call_match = re.search(r'\[tool\](search.*?)(?:\[/tool\]|\n|$)', response, re.IGNORECASE)
+
+        if tool_call_match:
+            tool_cmd = tool_call_match.group(1).strip()
+            if any(w in tool_cmd.lower() for w in ["search", "web", "lookup", "google", "rate", "price"]):
+                from tools.web_search import search_web_tavily
+                search_q = re.sub(r'^(search(\s+the)?\s+web\s+(for|about)?|search\s+for|lookup)\s*', '', tool_cmd, flags=re.I).strip()
+                if not search_q:
+                    search_q = user_msg
+                search_res = search_web_tavily(search_q, max_results=3)
+                if search_res.get("success") and search_res.get("results"):
+                    results = search_res["results"]
+                    context_text = "\n\n".join([f"Source [{r['title']}]({r['url']}):\n{r['content']}" for r in results])
+                    if search_res.get("answer"):
+                        context_text = f"Direct Answer: {search_res['answer']}\n\n" + context_text
+
+                    synth_prompt = f"Answer the user's question directly using the following live Tavily web search results. Include source URLs as markdown links.\n\nUser Question: {user_msg}\n\nSearch Results:\n{context_text}"
+                    response, model_used = router.chat([{"role": "user", "content": synth_prompt}], model=request.model)
+
         # 6. Store exchange
         memory_ids = await _store_exchange(user_msg, response, "user_said")
 
