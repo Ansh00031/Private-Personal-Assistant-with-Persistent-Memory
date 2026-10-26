@@ -5,5 +5,7 @@ __pycache__/
 data/*.db
 data/*.db*
 data/*.salt
+data/*.bak
+*.bak
 data/sandbox/
 .env
