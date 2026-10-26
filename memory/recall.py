@@ -2,7 +2,7 @@
 """Memory retrieval: semantic + keyword + temporal."""
 
 from llm import ModelRouter
-from memory.db import get_connection
+from memory.db import get_connection, DB_OperationalError
 from typing import Optional
 import numpy as np
 import sqlite3
@@ -30,7 +30,7 @@ def semantic_search(
                 ORDER BY distance ASC
                 LIMIT ?
             """, (emb_bytes, limit)).fetchall()
-        except sqlite3.OperationalError:
+        except (DB_OperationalError, sqlite3.OperationalError):
             return []  # vec0 extension not available
 
     results = []
@@ -47,14 +47,16 @@ def semantic_search(
     return results
 
 
+import re
+import logging
+logger = logging.getLogger(__name__)
+
 def _escape_fts5(query: str) -> str:
-    """Escape FTS5 special characters."""
-    # FTS5 special chars: " - + * ( ) ~ @ ? : < > |
-    special = ['"', '-', '+', '*', '(', ')', '~', '@', '?', ':', '<', '>', '|']
-    for ch in special:
-        query = query.replace(ch, ' ')
-    # Quote phrases
-    return query
+    """Escape and format natural language query safely for FTS5 MATCH."""
+    tokens = re.findall(r'\w+', query)
+    if not tokens:
+        return ""
+    return " ".join(f'"{token}"' for token in tokens)
 
 
 def keyword_search(query: str, limit: int = 10) -> list[dict]:
@@ -62,18 +64,21 @@ def keyword_search(query: str, limit: int = 10) -> list[dict]:
     safe_query = _escape_fts5(query)
     if not safe_query.strip():
         return []
-    with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT m.id, m.content, m.provenance, m.created_at,
-                   bm25(memories_fts) as rank
-            FROM memories_fts
-            JOIN memories m ON m.id = memories_fts.rowid
-            WHERE memories_fts MATCH ? AND m.deleted_at IS NULL
-            ORDER BY rank ASC
-            LIMIT ?
-        """, (safe_query, limit)).fetchall()
-
-    return [dict(r) for r in rows]
+    try:
+        with get_connection() as conn:
+            rows = conn.execute("""
+                SELECT m.id, m.content, m.provenance, m.created_at,
+                       bm25(memories_fts) as rank
+                FROM memories_fts
+                JOIN memories m ON m.id = memories_fts.rowid
+                WHERE memories_fts MATCH ? AND m.deleted_at IS NULL
+                ORDER BY rank ASC
+                LIMIT ?
+            """, (safe_query, limit)).fetchall()
+        return [dict(r) for r in rows]
+    except (DB_OperationalError, sqlite3.OperationalError) as e:
+        logger.warning(f"FTS5 keyword search query error: {e}")
+        return []
 
 
 def temporal_search(

@@ -84,3 +84,76 @@ def test_skill_result_no_confirmation():
     result = SkillResult(True, "Done")
     assert result.requires_confirmation is False
     assert result.confirmation_prompt is None
+
+
+
+def test_recall_skill_execute_builds_text(mock_router):
+    """RecallSkill.execute() joins memory lines with newlines (was crashing with .lines bug)."""
+    from unittest.mock import patch
+
+    fake_memories = [
+        {"id": 1, "content": "User likes coffee", "provenance": "user_said", "score": 0.92},
+        {"id": 2, "content": "Meeting at 3pm", "provenance": "tool_output", "score": 0.78},
+    ]
+
+    skill = RecallSkill()
+    with patch("skills.hybrid_recall", return_value=fake_memories):
+        result = skill.execute("recall my preferences", {}, mock_router)
+
+    assert result.success is True
+    assert "Here are the most relevant memories:" in result.output
+    assert "- [user_said] User likes coffee (score: 0.92)" in result.output
+    assert "- [tool_output] Meeting at 3pm (score: 0.78)" in result.output
+    # Verify lines are joined by newlines, not some other separator
+    lines = result.output.split("\n")
+    assert len(lines) == 3  # header + 2 memories
+
+
+def test_recall_skill_execute_no_memories(mock_router):
+    """RecallSkill.execute() returns a message when no memories found."""
+    from unittest.mock import patch
+
+    skill = RecallSkill()
+    with patch("skills.hybrid_recall", return_value=[]):
+        result = skill.execute("recall something unknown", {}, mock_router)
+
+    assert result.success is True
+    assert result.output == "No relevant memories found."
+
+def test_web_search_skill_can_handle(mock_router):
+    """WebSearchSkill triggers on search queries."""
+    from skills import WebSearchSkill
+    skill = WebSearchSkill()
+    assert skill.can_handle("search web for latest news on ai", {})
+    assert skill.can_handle("google quantum computing", {})
+    assert skill.can_handle("web search python 3.12 release", {})
+    assert not skill.can_handle("hello friend", {})
+
+
+def test_web_search_skill_execute_with_mocked_tavily(mock_router):
+    """WebSearchSkill calls search_web_tavily and formats results."""
+    from unittest.mock import patch
+    from skills import WebSearchSkill
+
+    skill = WebSearchSkill()
+    fake_tavily_resp = {
+        "success": True,
+        "answer": "Nemotron 3 was released by NVIDIA in 2026.",
+        "results": [
+            {
+                "title": "NVIDIA News",
+                "url": "https://nvidia.com/news",
+                "content": "NVIDIA announced the Nemotron 3 family."
+            }
+        ],
+        "query": "Nemotron 3"
+    }
+
+    mock_router.chat.return_value = ("According to [NVIDIA News](https://nvidia.com/news), Nemotron 3 was announced.", "nano")
+
+    with patch("tools.web_search.search_web_tavily", return_value=fake_tavily_resp):
+        result = skill.execute("search web for Nemotron 3", {}, mock_router)
+
+    assert result.success is True
+    assert "https://nvidia.com/news" in result.output
+

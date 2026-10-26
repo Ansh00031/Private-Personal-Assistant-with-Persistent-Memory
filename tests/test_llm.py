@@ -108,3 +108,56 @@ def test_missing_api_key_raises():
         mock_openai.side_effect = ValueError("NEBIUS_API_KEY environment variable not set")
         with pytest.raises(ValueError, match="NEBIUS_API_KEY"):
             ModelRouter()
+
+
+
+def test_validate_models_success(router, mock_openai):
+    """validate_models passes when all configured model IDs exist on the API."""
+    mock_openai.models.list.return_value.data = [
+        Mock(id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
+        Mock(id="nvidia/Nemotron-3-Ultra-550b-a55b"),
+        Mock(id="Qwen/Qwen3-Embedding-8B"),
+    ]
+    models = router.validate_models()
+    assert len(models) == 3
+
+
+def test_validate_models_mismatch_raises(router, mock_openai):
+    """validate_models raises ValueError on model ID mismatch."""
+    mock_openai.models.list.return_value.data = [
+        Mock(id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
+        # ultra and embedding models missing
+    ]
+    with pytest.raises(ValueError, match="Model ID mismatch"):
+        router.validate_models()
+
+
+def test_daily_cost_cap_downgrades_ultra_to_nano(router, mock_openai):
+    """When daily cost cap is reached, requests for ultra are downgraded to nano."""
+    router.daily_cost_cap = 0.05
+    # Force cost to exceed cap
+    router.record_cost(0.06)
+
+    messages = [{"role": "user", "content": "Complex reasoning"}]
+    _, model_used = router.chat(messages, model="ultra")
+
+    # Must be forced to nano due to cost cap
+    assert model_used == "nano"
+    mock_openai.chat.completions.create.assert_called_with(
+        model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=2048,
+    )
+
+
+def test_token_usage_increments_cost(router, mock_openai):
+    """Token usage in API response properly increments router's daily_cost."""
+    initial_cost = router.daily_cost
+    mock_resp = Mock()
+    mock_resp.choices = [Mock(message=Mock(content="Test"))]
+    mock_resp.usage = Mock(prompt_tokens=500, completion_tokens=500)
+    mock_openai.chat.completions.create.return_value = mock_resp
+
+    router.chat([{"role": "user", "content": "hi"}], model="nano")
+    assert router.daily_cost > initial_cost

@@ -7,13 +7,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, Literal
 from llm import ModelRouter
-from memory.db import init_db, get_connection, hard_delete_memory, verify_hard_delete
+from memory.db import init_db, get_connection, hard_delete_memory, verify_hard_delete, HAS_SQLCIPHER
 from memory.extract import extract_facts_and_episodes
 from memory.recall import hybrid_recall
 from skills import create_default_engine, SkillResult
 from jobs import start_scheduler, shutdown_scheduler, morning_brief
+from tools.actions import registry
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
+import time
 import logging
+from memory.db import HAS_SQLCIPHER
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +30,23 @@ app = FastAPI(title="Private Personal Assistant", version="0.1.0")
 router = ModelRouter()
 skill_engine = create_default_engine(router)
 init_db()
+
+# Rate limiting for demo protection (configurable requests per minute per client)
+RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "30"))
+_request_counts = {}
+
+def check_rate_limit(client_ip: str):
+    now = time.time()
+    minute_window = int(now // 60)
+    key = f"{client_ip}:{minute_window}"
+    count = _request_counts.get(key, 0)
+    if count >= RATE_LIMIT_RPM:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({RATE_LIMIT_RPM} requests/min). Please wait a moment.")
+    _request_counts[key] = count + 1
+    if len(_request_counts) > 500:
+        for k in list(_request_counts.keys()):
+            if not k.endswith(f":{minute_window}"):
+                _request_counts.pop(k, None)
 
 # Mount static files for UI
 app.mount("/ui", StaticFiles(directory="ui"), name="ui")
@@ -45,6 +68,7 @@ class ChatResponse(BaseModel):
     skill_used: Optional[str] = None
     requires_confirmation: bool = False
     confirmation_prompt: Optional[str] = None
+    action_id: Optional[str] = None
 
 
 class MemoryDeleteRequest(BaseModel):
@@ -53,6 +77,10 @@ class MemoryDeleteRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
+    if HAS_SQLCIPHER:
+        logger.info("encryption: on")
+    else:
+        logger.warning("encryption: off")
     start_scheduler(router)
 
 
@@ -68,7 +96,27 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Production health check verifying DB connectivity, encryption status, and models."""
+    db_ok = False
+    try:
+        with get_connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+            db_ok = True
+    except Exception as e:
+        logger.error(f"Health check DB probe failed: {e}")
+
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "connected" if db_ok else "error",
+        "encryption": "on" if HAS_SQLCIPHER else "off",
+        "models": {
+            "nano": router.nano_model,
+            "ultra": router.ultra_model,
+            "embedding": router.embedding_model,
+        },
+        "daily_cost_usd": router.daily_cost,
+        "daily_cost_cap_usd": router.daily_cost_cap,
+    }
 
 
 @app.post("/morning-brief")
@@ -83,7 +131,9 @@ async def trigger_morning_brief():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_req: Request):
+    client_ip = http_req.client.host if http_req.client else "local"
+    check_rate_limit(client_ip)
     """Main chat endpoint with memory retrieval, conversation history, and skill routing."""
     try:
         user_msg = request.message
@@ -148,6 +198,7 @@ If user asks to perform an action (write, delete, schedule), indicate what tool 
                     skill_used=skill.name,
                     requires_confirmation=True,
                     confirmation_prompt=skill_result.confirmation_prompt,
+                    action_id=skill_result.action_id,
                 )
             # If skill handled it completely, return its output
             if skill_result.success:
@@ -162,6 +213,29 @@ If user asks to perform an action (write, delete, schedule), indicate what tool 
 
         # 5. Fall back to LLM with full context
         response, model_used = router.chat(messages, model=request.model)
+
+        # Intercept tool actions emitted by LLM (e.g. [tool]search web for ...[/tool])
+        import re
+        tool_call_match = re.search(r'\[tool\](.*?)\[/tool\]', response, re.IGNORECASE | re.DOTALL)
+        if not tool_call_match:
+            tool_call_match = re.search(r'\[tool\](search.*?)(?:\[/tool\]|\n|$)', response, re.IGNORECASE)
+
+        if tool_call_match:
+            tool_cmd = tool_call_match.group(1).strip()
+            if any(w in tool_cmd.lower() for w in ["search", "web", "lookup", "google", "rate", "price"]):
+                from tools.web_search import search_web_tavily
+                search_q = re.sub(r'^(search(\s+the)?\s+web\s+(for|about)?|search\s+for|lookup)\s*', '', tool_cmd, flags=re.I).strip()
+                if not search_q:
+                    search_q = user_msg
+                search_res = search_web_tavily(search_q, max_results=3)
+                if search_res.get("success") and search_res.get("results"):
+                    results = search_res["results"]
+                    context_text = "\n\n".join([f"Source [{r['title']}]({r['url']}):\n{r['content']}" for r in results])
+                    if search_res.get("answer"):
+                        context_text = f"Direct Answer: {search_res['answer']}\n\n" + context_text
+
+                    synth_prompt = f"Answer the user's question directly using the following live Tavily web search results. Include source URLs as markdown links.\n\nUser Question: {user_msg}\n\nSearch Results:\n{context_text}"
+                    response, model_used = router.chat([{"role": "user", "content": synth_prompt}], model=request.model)
 
         # 6. Store exchange
         memory_ids = await _store_exchange(user_msg, response, "user_said")
@@ -204,6 +278,44 @@ async def _store_exchange(user_msg: str, assistant_msg: str, provenance: str) ->
         assistant_id = cur.lastrowid
         conn.commit()
     return [user_id, assistant_id]
+
+
+@app.post("/actions/{action_id}/confirm")
+async def confirm_action_endpoint(action_id: str):
+    """Confirm and execute a proposed 2-step tool action."""
+    try:
+        result = registry.confirm(action_id)
+        # Store confirmed action in memories for assistant context
+        summary = result.get("summary", "action")
+        await _store_exchange(f"Confirmed action: {summary}", f"Action executed successfully: {summary}", "tool_output")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Action confirmation execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Action execution failed: {str(e)}")
+
+
+@app.post("/actions/{action_id}/cancel")
+async def cancel_action_endpoint(action_id: str):
+    """Cancel a proposed tool action."""
+    try:
+        result = registry.cancel(action_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/tool-audit-log")
+async def get_tool_audit_log(limit: int = 50):
+    """Retrieve non-sensitive tool audit log entries."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, tool_name, action, target_id, status, timestamp
+            FROM tool_audit_log
+            ORDER BY id DESC LIMIT ?
+        """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 @app.delete("/memory/{memory_id}")

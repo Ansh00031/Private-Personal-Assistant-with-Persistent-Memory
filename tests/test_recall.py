@@ -87,7 +87,7 @@ def test_semantic_search_skipped_when_vec0_unavailable(mock_router, test_db):
     try:
         results = semantic_search(mock_router, "coffee", limit=5)
         assert isinstance(results, list)
-    except sqlite3.OperationalError:
+    except Exception:
         pytest.skip("vec0 extension not available")
 
 

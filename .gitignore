@@ -2,8 +2,10 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-data/memory.db
-data/memory.db-shm
-data/memory.db-wal
+data/*.db
+data/*.db*
+data/*.salt
+data/*.bak
+*.bak
 data/sandbox/
 .env

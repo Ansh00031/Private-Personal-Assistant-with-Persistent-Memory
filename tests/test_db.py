@@ -64,6 +64,9 @@ def test_init_db_creates_tables(test_db):
         assert "memories_fts" in table_names
         assert "episodes" in table_names
         assert "provenance_log" in table_names
+        assert "notes" in table_names
+        assert "events" in table_names
+        assert "tool_audit_log" in table_names
         # vec table only exists if vec0 extension is available
         # assert "memories_vec" in table_names  # skipped when vec0 not available
 
@@ -149,7 +152,7 @@ def test_hard_delete_removes_everything(test_db):
                 (mem_id, emb.tobytes())
             )
             conn.commit()
-        except sqlite3.OperationalError:
+        except Exception:
             pass  # vec table not available
 
     # Hard delete
@@ -184,3 +187,109 @@ def test_transaction_rollback_on_error(test_db):
     with get_connection() as conn:
         count = conn.execute("SELECT COUNT(*) FROM memories WHERE content = 'should rollback'").fetchone()[0]
         assert count == 0
+
+
+
+def test_derive_key_scrypt():
+    """Verify scrypt KDF generates 256-bit (64 hex chars) deterministic key."""
+    from memory.db import derive_key
+    salt = b"test_salt_123456"
+    key1 = derive_key("my-secret-passphrase", salt)
+    key2 = derive_key("my-secret-passphrase", salt)
+    assert len(key1) == 64  # 32 bytes hex encoded = 256 bits
+    assert key1 == key2
+
+    # Different salt or passphrase produces different key
+    diff_pass = derive_key("different-passphrase", salt)
+    diff_salt = derive_key("my-secret-passphrase", b"different_salt_78")
+    assert key1 != diff_pass
+    assert key1 != diff_salt
+
+    # Empty passphrase rejected
+    with pytest.raises(ValueError):
+        derive_key("", salt)
+
+
+def test_refuse_start_when_sqlcipher_unavailable(monkeypatch):
+    """If sqlcipher3 is unavailable and MEMORY_ENCRYPTION != 'off', must refuse to start with clear error."""
+    import sys
+    import importlib
+    monkeypatch.setenv("MEMORY_ENCRYPTION", "on")
+    # Hide sqlcipher3 to simulate missing library
+    monkeypatch.setitem(sys.modules, "sqlcipher3", None)
+
+    with pytest.raises(RuntimeError, match="SQLCipher is required for encrypted memory but 'sqlcipher3' is not available"):
+        import memory.db
+        importlib.reload(memory.db)
+
+
+def test_allow_plain_sqlite_only_when_explicitly_off(monkeypatch, tmp_path):
+    """Plain SQLite allowed ONLY when MEMORY_ENCRYPTION=off is set explicitly."""
+    import importlib
+    db_file = tmp_path / "plain_test.db"
+    monkeypatch.setenv("MEMORY_ENCRYPTION", "off")
+    monkeypatch.setenv("MEMORY_DB_PATH", str(db_file))
+
+    import memory.db
+    importlib.reload(memory.db)
+    assert memory.db.HAS_SQLCIPHER is False
+    conn = memory.db.get_connection()
+    conn.execute("CREATE TABLE plain_test (id INT)")
+    conn.close()
+
+
+def test_sqlcipher_encryption_fails_plain_sqlite_succeeds_with_key(tmp_path, monkeypatch):
+    """
+    Real encryption test:
+    Opening encrypted DB file with plain sqlite3 (no key) fails.
+    Opening with SQLCipher and derived key succeeds.
+    """
+    import importlib
+    db_file = tmp_path / "encrypted_test.db"
+    monkeypatch.setenv("MEMORY_ENCRYPTION", "on")
+    monkeypatch.setenv("MEMORY_DB_PATH", str(db_file))
+    monkeypatch.setenv("MEMORY_PASSPHRASE", "judge-test-passphrase-2026")
+
+    import memory.db
+    importlib.reload(memory.db)
+    if not memory.db.HAS_SQLCIPHER:
+        pytest.skip("SQLCipher not available in environment")
+
+    # Initialize encrypted database
+    memory.db.init_db()
+
+    # Insert a record using encrypted connection
+    with memory.db.get_connection() as conn:
+        conn.execute("INSERT INTO memories (content, provenance) VALUES (?, ?)", ("Secret personal data", "user_said"))
+        conn.commit()
+
+    # 1. Plain sqlite3 connection (no key) must FAIL to read encrypted data
+    plain_conn = sqlite3.connect(str(db_file))
+    with pytest.raises(sqlite3.DatabaseError):
+        plain_conn.execute("SELECT content FROM memories").fetchall()
+    plain_conn.close()
+
+    # 2. SQLCipher connection with proper key must SUCCEED
+    with memory.db.get_connection() as conn:
+        row = conn.execute("SELECT content FROM memories").fetchone()
+        assert row is not None
+        assert row["content"] == "Secret personal data"
+
+
+def test_logging_encryption_on_at_startup(caplog, monkeypatch, tmp_path):
+    """Verify 'encryption: on' is logged at startup when SQLCipher is active."""
+    import importlib
+    import logging
+    db_file = tmp_path / "log_test.db"
+    monkeypatch.setenv("MEMORY_ENCRYPTION", "on")
+    monkeypatch.setenv("MEMORY_DB_PATH", str(db_file))
+    monkeypatch.setenv("MEMORY_PASSPHRASE", "log-test-passphrase")
+
+    import memory.db
+    importlib.reload(memory.db)
+    if not memory.db.HAS_SQLCIPHER:
+        pytest.skip("SQLCipher not available")
+
+    with caplog.at_level(logging.INFO):
+        memory.db.init_db()
+        assert any("encryption: on" in record.message for record in caplog.records)
